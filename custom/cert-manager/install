@@ -1,0 +1,30 @@
+#!/bin/bash
+command -v cmctl >/dev/null || { printf "\033[31mERROR: Please install cmctl, to verify installation. For example, brew install cmctl\033[0m\n" >&2 && exit 1; }
+
+# For uninstall notes, see https://cert-manager.io/docs/installation/helm/#uninstalling
+
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+# helm search repo jetstack/cert-manager --versions
+CERT_MANAGER_VERSION=v1.12.2
+kubectl apply -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION?}/cert-manager.crds.yaml"
+helm install cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --create-namespace \
+  --version "${CERT_MANAGER_VERSION?}"
+
+if ! cmctl check api --wait=2m; then
+  echo "ERROR: cmctl check api failed"
+  echo 'To debug, run:
+kubectl apply -f cert-manager-test.yaml
+kubectl describe certificate -n cert-manager-test
+kubectl delete -f cert-manager-test.yaml
+'
+  exit 1
+fi
+
+kubectl apply -f cluster-issuer.yaml
+kubectl get certificate
+kubectl describe certificate example-choam-de-tls
+kubectl describe secret example-choam-de-tls
+kubectl delete secret example-choam-de-tls
