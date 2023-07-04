@@ -1,0 +1,25 @@
+#!/bin/bash
+PIHOLE_SECRET=pihole-password
+PIHOLE_SECRET_KEY=EXTERNAL_DNS_PIHOLE_PASSWORD
+
+helm repo add mojo2600 https://mojo2600.github.io/pihole-kubernetes/
+helm repo update
+helm upgrade \
+  --install pihole mojo2600/pihole \
+  --namespace dns \
+  --create-namespace \
+  --set "admin.existingSecret=$PIHOLE_SECRET" \
+  --set "admin.passwordKey=$PIHOLE_SECRET_KEY" \
+  --values pihole.yaml
+
+kubectl -n dns create secret generic "$PIHOLE_SECRET" \
+  --from-literal "$PIHOLE_SECRET_KEY"="${PIHOLE_ADMIN_PASSWORD?}"
+
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm repo update
+kubectl apply -f external-dns.yaml
+while [[ $(kubectl -n dns get pods -l app=external-dns -o 'jsonpath={..status.conditions[?(@.type=="Ready")].status}') != "True" ]]; do
+  echo "Waiting for the external-dns pod to be ready..."
+  sleep 5
+done
+kubectl -n dns logs -l app=external-dns -f

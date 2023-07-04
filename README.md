@@ -4,7 +4,10 @@
 
 This playbook will build an HA Kubernetes cluster with `k3s`, `kube-vip` and MetalLB via `ansible`.
 
-This is based on the work from [this fork](https://github.com/212850a/k3s-ansible) which is based on the work from [k3s-io/k3s-ansible](https://github.com/k3s-io/k3s-ansible). It uses [kube-vip](https://kube-vip.chipzoller.dev/) to create a load balancer for control plane, and [metal-lb](https://metallb.universe.tf/installation/) for its service `LoadBalancer`.
+This is based on the work from [this fork](https://github.com/212850a/k3s-ansible) which is based on the work
+from [k3s-io/k3s-ansible](https://github.com/k3s-io/k3s-ansible).
+It uses [kube-vip](https://kube-vip.chipzoller.dev/) to create a load balancer for control plane,
+and [metal-lb](https://metallb.universe.tf/installation/) for its service `LoadBalancer`.
 
 If you want more context on how this works, see:
 
@@ -28,13 +31,18 @@ on processor architecture:
 
 ## ✅ System requirements
 
-- Control Node (the machine you are running `ansible` commands) must have Ansible 2.11+ If you need a quick primer on Ansible [you can check out my docs and setting up Ansible](https://docs.technotim.live/posts/ansible-automation/).
+- Control Node (the machine you are running `ansible` commands) must have Ansible 2.11+
+  If you need a quick primer on Ansible [you can check out my docs and setting up Ansible](https://docs.technotim.live/posts/ansible-automation/).
 
-- You will also need to install collections that this playbook uses by running `ansible-galaxy collection install -r ./collections/requirements.yml` (important❗)
+- You will also need to install collections that this playbook uses by
+  running `ansible-galaxy collection install -r ./collections/requirements.yml` (important❗)
 
-- [`netaddr` package](https://pypi.org/project/netaddr/) must be available to Ansible. If you have installed Ansible via apt, this is already taken care of. If you have installed Ansible via `pip`, make sure to install `netaddr` into the respective virtual environment.
+- [`netaddr` package](https://pypi.org/project/netaddr/) must be available to Ansible.
+  If you have installed Ansible via apt, this is already taken care of.
+  If you have installed Ansible via `pip`, make sure to install `netaddr` into the respective virtual environment.
 
-- `server` and `agent` nodes should have passwordless SSH access, if not you can supply arguments to provide credentials `--ask-pass --ask-become-pass` to each command.
+- `server` and `agent` nodes should have passwordless SSH access,
+  if not you can supply arguments to provide credentials `--ask-pass --ask-become-pass` to each command.
 
 ## 🚀 Getting Started
 
@@ -65,7 +73,8 @@ master
 node
 ```
 
-If multiple hosts are in the master group, the playbook will automatically set up k3s in [HA mode with etcd](https://rancher.com/docs/k3s/latest/en/installation/ha-embedded/).
+If multiple hosts are in the master group, the playbook will automatically set up k3s
+in [HA mode with etcd](https://rancher.com/docs/k3s/latest/en/installation/ha-embedded/).
 
 Finally, copy `ansible.example.cfg` to `ansible.cfg` and adapt the inventory path to match the files that you just created.
 
@@ -89,7 +98,7 @@ After deployment control plane will be accessible via virtual ip-address which i
 ansible-playbook reset.yml -i inventory/my-cluster/hosts.ini
 ```
 
->You should also reboot these nodes due to the VIP not being destroyed
+> You should also reboot these nodes due to the VIP not being destroyed
 
 ## ⚙️ Kube Config
 
@@ -116,7 +125,10 @@ You can find more information about it [here](molecule/README.md).
 
 ### Pre-commit Hooks
 
-This repo uses `pre-commit` and `pre-commit-hooks` to lint and fix common style and syntax errors.  Be sure to install python packages and then run `pre-commit install`.  For more information, see [pre-commit](https://pre-commit.com/)
+This repo uses `pre-commit` and `pre-commit-hooks` to lint and fix common style and syntax errors.
+
+Be sure to install python packages and then run `pre-commit install`.
+For more information, see [pre-commit](https://pre-commit.com/)
 
 ## Thanks 🤝
 
