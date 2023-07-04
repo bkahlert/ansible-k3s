@@ -1,0 +1,168 @@
+#!/bin/bash
+# shellcheck disable=SC2029
+INGRESS_SERVICE_HOST=ingress-nginx-controller.ingress-nginx.svc.cluster.local
+INGRESS_SERVICE_PORT_HTTP=80
+INGRESS_SERVICE_PORT_HTTPS=443
+INGRESS_SERVER_PORT_HTTP=8080
+INGRESS_SERVER_PORT_HTTPS=8443
+TUNNEL_NAMESPACE=ingress-nginx
+TUNNEL_REMOTE_HOST=${TUNNEL_REMOTE_HOST?}
+TUNNEL_REMOTE_PORT=${TUNNEL_REMOTE_PORT?}
+TUNNEL_USER=${TUNNEL_USER?}
+TUNNEL_PRIVATE_KEY="$HOME/.ssh/$TUNNEL_USER"
+TUNNEL_SECRET=ssh-tunnel
+TUNNEL_SECRET_KEY=ssh-privatekey
+[ -f "$TUNNEL_PRIVATE_KEY" ] || ssh-keygen -t rsa -f "$TUNNEL_PRIVATE_KEY" -N ''
+
+echo "Allowing GatewayPorts on $TUNNEL_REMOTE_HOST"
+ssh "$TUNNEL_REMOTE_HOST" "
+if ! sshd -T | grep -q '^gatewayports yes$'; then
+  echo 'GatewayPorts not set to yes, updating...'
+  if grep -q '^#GatewayPorts' /etc/ssh/sshd_config; then
+    sed -i 's/^#GatewayPorts.*/GatewayPorts yes/' /etc/ssh/sshd_config
+  elif grep -q '^GatewayPorts' /etc/ssh/sshd_config; then
+    sed -i 's/^GatewayPorts.*/GatewayPorts yes/' /etc/ssh/sshd_config
+  else
+    echo 'GatewayPorts yes' | sudo tee -a /etc/ssh/sshd_config > /dev/null
+  fi
+  echo 'Restarting sshd to apply changes...'
+  sudo systemctl restart ssh
+  echo 'Done.'
+else
+  echo 'GatewayPorts is already set to yes.'
+fi
+"
+
+echo "Setting up reverse proxy on $TUNNEL_REMOTE_HOST"
+ssh "$TUNNEL_REMOTE_HOST" "
+yum remove httpd -y
+mkdir -p nginx-reverse-proxy
+echo 'events {
+}
+
+stream {
+    upstream http {
+        server host.docker.internal:$INGRESS_SERVER_PORT_HTTP;
+    }
+
+    upstream https {
+        server host.docker.internal:$INGRESS_SERVER_PORT_HTTPS;
+    }
+
+    server {
+        listen 80;
+        proxy_pass http;
+    }
+
+    server {
+        listen 443;
+        proxy_pass https;
+    }
+}' > nginx-reverse-proxy/nginx.conf
+docker stop nginx-reverse-proxy &>/dev/null
+docker rm nginx-reverse-proxy &>/dev/null
+docker run -d \
+  --name nginx-reverse-proxy \
+  --restart=always \
+  --add-host=host.docker.internal:host-gateway \
+  -v \$(pwd)/nginx-reverse-proxy/nginx.conf:/etc/nginx/nginx.conf:ro \
+  -p 80:80 \
+  -p 443:443 \
+  nginx:latest
+"
+
+echo "Creating user $TUNNEL_USER on $TUNNEL_REMOTE_HOST"
+ssh "$TUNNEL_REMOTE_HOST" "
+if ! id -u '$TUNNEL_USER' >/dev/null 2>&1; then
+  useradd -m '$TUNNEL_USER'
+  mkdir -p '/home/$TUNNEL_USER/.ssh'
+fi
+"
+
+echo "Copying public key to $TUNNEL_REMOTE_HOST"
+scp "$TUNNEL_PRIVATE_KEY".pub "$TUNNEL_REMOTE_HOST":"/home/$TUNNEL_USER/.ssh/authorized_keys"
+
+echo "Setting permissions on $TUNNEL_REMOTE_HOST"
+ssh "$TUNNEL_REMOTE_HOST" "
+chown '${TUNNEL_USER}:${TUNNEL_USER}' '/home/$TUNNEL_USER/.ssh/authorized_keys'
+chmod 600 '/home/$TUNNEL_USER/.ssh/authorized_keys'
+"
+
+echo "Testing connection to $TUNNEL_REMOTE_HOST"
+if ! ssh -q -o BatchMode=yes -o StrictHostKeyChecking=no -i "$TUNNEL_PRIVATE_KEY" "$TUNNEL_USER"@"$TUNNEL_REMOTE_HOST" exit; then
+  echo "Couldn't connect to $TUNNEL_REMOTE_HOST as $TUNNEL_USER."
+  exit 1
+fi
+
+echo "Creating tunnel deployment"
+kubectl -n "$TUNNEL_NAMESPACE" create secret generic "$TUNNEL_SECRET" --from-file="$TUNNEL_SECRET_KEY"="$TUNNEL_PRIVATE_KEY"
+kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssh-tunnel
+  namespace: $TUNNEL_NAMESPACE
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ssh-tunnel
+  template:
+    metadata:
+      labels:
+        app: ssh-tunnel
+    spec:
+      volumes:
+        - name: "$TUNNEL_SECRET"
+          secret:
+            secretName: "$TUNNEL_SECRET"
+      containers:
+        - name: ssh-tunnel
+          image: debian:latest
+          volumeMounts:
+            - name: "$TUNNEL_SECRET"
+              mountPath: "/$TUNNEL_SECRET"
+          command: [ "/bin/sh" ]
+          args:
+            - "-c"
+            - |
+              mkdir -p /.ssh
+              chmod 700 /.ssh
+              cat '/$TUNNEL_SECRET/$TUNNEL_SECRET_KEY' > '/.ssh/$TUNNEL_SECRET_KEY'
+              chmod 600 '/.ssh/$TUNNEL_SECRET_KEY'
+              echo 'Host *' > /.ssh/config
+              echo '    StrictHostKeyChecking no' >> /.ssh/config
+              echo '    UserKnownHostsFile /dev/null' >> /.ssh/config
+              echo '    IdentityFile /.ssh/$TUNNEL_SECRET_KEY' >> /.ssh/config
+              chown -R root:root /.ssh/config
+              apt-get update
+              apt-get install -y autossh openssh-client
+              autossh -M 0 -N \
+                -o 'ServerAliveInterval 30' \
+                -o 'ServerAliveCountMax 3' \
+                -o 'ExitOnForwardFailure yes' \
+                -R '${INGRESS_SERVER_PORT_HTTP}:${INGRESS_SERVICE_HOST}:${INGRESS_SERVICE_PORT_HTTP}' \
+                -R '${INGRESS_SERVER_PORT_HTTPS}:${INGRESS_SERVICE_HOST}:${INGRESS_SERVICE_PORT_HTTPS}' \
+                -p '$TUNNEL_REMOTE_PORT' \
+                '${TUNNEL_USER}@${TUNNEL_REMOTE_HOST}' \
+                -F '/.ssh/config'
+          env:
+            - name: AUTOSSH_GATETIME
+              value: "0"
+            - name: AUTOSSH_PORT
+              value: "0"
+            - name: AUTOSSH_POLL
+              value: "30"
+            - name: AUTOSSH_FIRST_POLL
+              value: "30"
+            - name: AUTOSSH_LOGFILE
+              value: "/dev/stdout"
+            - name: AUTOSSH_DEBUG
+              value: "1"
+            - name: AUTOSSH_LOGLEVEL
+              value: "7"
+            - name: AUTOSSH_MAXLIFETIME
+              value: "0"
+      restartPolicy: Always
+EOF
+kubectl -n "$TUNNEL_NAMESPACE" logs -l app=ssh-tunnel
