@@ -8,10 +8,11 @@ helm repo update
 # helm search repo jetstack/cert-manager --versions
 CERT_MANAGER_VERSION=v1.12.2
 kubectl apply -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION?}/cert-manager.crds.yaml"
-helm install cert-manager jetstack/cert-manager \
+helm upgrade \
+  --install cert-manager jetstack/cert-manager \
+  --version "${CERT_MANAGER_VERSION?}" \
   --namespace cert-manager \
-  --create-namespace \
-  --version "${CERT_MANAGER_VERSION?}"
+  --create-namespace
 
 if ! cmctl check api --wait=2m; then
   echo "ERROR: cmctl check api failed"

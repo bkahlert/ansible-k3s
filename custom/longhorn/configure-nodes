@@ -1,0 +1,37 @@
+#!/bin/bash
+# Run this script after longhorn was installed
+
+LONGHORN_NAMESPACE="longhorn-system"
+LONGHORN_DISK_NAME=lh01
+LONGHORN_MOUNTPOINT=/mnt/lh01
+
+for NODE_NAME in node00 node01 node02 node03; do
+  echo "Configuring $NODE_NAME"
+  # shellcheck disable=SC2029
+  if ! ssh "$NODE_NAME" "mountpoint -q '$LONGHORN_MOUNTPOINT'"; then
+    echo "WARNING: $LONGHORN_MOUNTPOINT is not mounted on $NODE_NAME. Skipping."
+    continue
+  fi
+
+  already_exists=false
+  for DISK_NAME in $(kubectl -n "$LONGHORN_NAMESPACE" get nodes.longhorn.io "$NODE_NAME" -o json | jq -r '.spec.disks | keys[]'); do
+    case "$DISK_NAME" in
+    default-*)
+      echo "Disabling scheduling for default disk $DISK_NAME on $NODE_NAME"
+      kubectl -n "$LONGHORN_NAMESPACE" patch nodes.longhorn.io "$NODE_NAME" \
+        --type='json' -p="[{'op': 'replace', 'path': '/spec/disks/$DISK_NAME/allowScheduling', 'value': false}]"
+      ;;
+    "$LONGHORN_DISK_NAME")
+      already_exists=true
+      echo "Replacing the existing $DISK_NAME on $NODE_NAME"
+      kubectl -n "$LONGHORN_NAMESPACE" patch nodes.longhorn.io "$NODE_NAME" \
+        --type='json' -p="[{'op': 'replace', 'path': '/spec/disks/$DISK_NAME', 'value': {'path': '$LONGHORN_MOUNTPOINT', 'allowScheduling': true, 'storageReserved': 0}}]"
+      ;;
+    esac
+  done
+  if ! $already_exists; then
+    echo "Creating new disk $LONGHORN_DISK_NAME -> $LONGHORN_MOUNTPOINT on $NODE_NAME"
+    kubectl -n "$LONGHORN_NAMESPACE" patch nodes.longhorn.io "$NODE_NAME" \
+      --type='json' -p="[{'op': 'add', 'path': '/spec/disks/$LONGHORN_DISK_NAME', 'value': {'path': '$LONGHORN_MOUNTPOINT', 'allowScheduling': true, 'storageReserved': 0}}]"
+  fi
+done

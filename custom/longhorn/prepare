@@ -1,0 +1,47 @@
+#!/bin/bash
+# Run this script of every node to format the disk and mount it to LONGHORN_MOUNTPOINT
+# Use lsblk to verify if the device to format is LONGHORN_DEVICE
+
+LONGHORN_DEVICE=/dev/sda
+LONGHORN_PARTITION=${LONGHORN_DEVICE?}1
+LONGHORN_MOUNTPOINT=/mnt/lh01
+
+if ! dpkg -s open-iscsi >/dev/null 2>&1; then
+  echo "Installing open-iscsi"
+  sudo apt-get update
+  sudo apt-get install -y open-iscsi
+fi
+
+echo "Wiping partition $LONGHORN_PARTITION"
+sudo wipefs -fa "$LONGHORN_PARTITION"
+
+echo "Wiping device $LONGHORN_DEVICE"
+sudo wipefs -fa "$LONGHORN_DEVICE"
+
+echo "Creating partition $LONGHORN_PARTITION"
+sudo umount "$LONGHORN_DEVICE"*
+sudo parted -s "$LONGHORN_DEVICE" mklabel msdos
+sudo parted -s "$LONGHORN_DEVICE" mkpart primary ext4 0% 100%
+
+echo "Refreshing disk information for $LONGHORN_DEVICE"
+sudo partprobe "$LONGHORN_DEVICE"
+
+echo "Formatting partition $LONGHORN_PARTITION"
+sudo mkfs.ext4 "$LONGHORN_PARTITION"
+
+echo "Creating mountpoint $LONGHORN_MOUNTPOINT"
+sudo mkdir "$LONGHORN_MOUNTPOINT"
+
+echo "Mounting /dev/sda1 to $LONGHORN_MOUNTPOINT"
+sudo mount /dev/sda1 "$LONGHORN_MOUNTPOINT"
+
+echo "Creating permanent mount"
+UUID=$(sudo blkid "$LONGHORN_PARTITION" -s UUID -o value)
+
+[ -z "$UUID" ] || { printf "\033[31mERROR: No UUID found for %s. Please make sure the partition exists.\033[0m\n" "$LONGHORN_PARTITION" >&2 && exit 1; }
+
+sudo cp /etc/fstab /etc/fstab.bak
+echo "# Longhorn storage" | sudo tee -a /etc/fstab
+echo "UUID=$UUID $LONGHORN_MOUNTPOINT ext4 rw,relatime 0 0" | sudo tee -a /etc/fstab
+
+sudo mount -a || { printf "\033[31mERROR: Failed to mount %s to %s\033[0m\n" "$LONGHORN_PARTITION" "$LONGHORN_MOUNTPOINT" >&2 && exit 1; }
